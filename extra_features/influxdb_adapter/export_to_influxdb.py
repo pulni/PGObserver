@@ -37,7 +37,7 @@ DATA_COLLECTION_QUERIES_TO_SERIES_MAPPING = {       # queries are located in the
     'table_io_details': {'base_name': 'table_io_details.{ui_shortname}',
                                             'cols_to_expand': ['schema', 'table']},
     }
-MAX_DAYS_TO_SELECT_AT_A_TIME = 7        # chunk size for cases when we need to build up a history of many months
+MAX_DAYS_TO_SELECT_AT_A_TIME = 3        # "chunk size" for selects from Postgres. for cases when we need to build up a long history
 SAFETY_SECONDS_FOR_LATEST_DATA = 10     # let's leave the freshest data out as the whole dataset might not be fully inserted yet
 settings = None   # for config file contents
 
@@ -148,11 +148,10 @@ def idb_get_last_timestamp_for_series_as_local_datetime(series_name, ui_shortnam
     max_days_to_fetch = settings['influxdb']['max_days_to_fetch']
 
     last_tz_gmt, last_tz_local = last_tz_from_influx.get(series_name+ui_shortname, (None, None))
-    sql = '''select * from /^{}.{}.*/ where time > {}'''.format(series_name, ui_shortname,
+    sql = '''select * from /^{}.{}.*/ where time > {} order by time desc limit 1'''.format(series_name, ui_shortname,
                                                                 "'{}'".format(last_tz_gmt) if last_tz_gmt else 'now() - {}d'.format(max_days_to_fetch))
     if settings['influxdb']['data_model_tag']:
-        # TODO workaround for the non-existing "order by desc" - read all points and take the last. fix in 0.9.4 ?
-        sql = "select * from {}{} where dbname = '{}' and time > {} order by time asc".format(settings['influxdb']['tag_mode_series_prefix'],
+        sql = "select * from {}{} where dbname = '{}' and time > {} order by time desc limit 1".format(settings['influxdb']['tag_mode_series_prefix'],
                                                    series_name, ui_shortname, "'{}'".format(last_tz_gmt) if last_tz_gmt else 'now() - {}d'.format(max_days_to_fetch))
 
     try:
@@ -256,8 +255,6 @@ def do_pull_push_for_one_host(host_id, ui_shortname, is_first_loop, args):
 
                     measurement_name = view_name
                     tags = series_mapping_info.get('cols_to_expand', [])
-
-                    logging.debug('[%s] fetching data from query "%s" into base series "%s"', view_name, measurement_name)
 
                     logging.debug('[%s] trying to fetch latest timestamp from existing series "%s" ...', ui_shortname, measurement_name)
                     latest_timestamp_for_series = idb_get_last_timestamp_for_series_as_local_datetime(measurement_name,
