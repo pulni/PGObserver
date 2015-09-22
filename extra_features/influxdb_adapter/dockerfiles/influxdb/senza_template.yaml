@@ -1,0 +1,49 @@
+# *** NB! *** Appliance uses currently only local storage (5 GB for data on t2.micro) and is not clustered
+
+# See http://stups.readthedocs.org/en/latest/components/senza.html for help on Senza
+
+# basic information for generating and executing this definition
+SenzaInfo:
+  StackName: influxdb
+  Parameters:
+    - ImageVersion:
+        Description: "Docker image version of influxdb. e.g. registry.opensource.zalan.do/acid/influxdb:0.9-SNAPSHOT"
+    - DsUser:
+        Description: "Datastore DB user. 'pgobserver_gatherer' role created by bootstrap should be used"
+    - DsPass:
+        Description: "Datastore DB pass"
+
+
+# a list of senza components to apply to the definition
+SenzaComponents:
+
+  # this basic configuration is required for the other components
+  - Configuration:
+      Type: Senza::StupsAutoConfiguration # auto-detect network setup
+
+  # will create a launch configuration and auto scaling group with scaling triggers
+  - AppServer:
+      Type: Senza::TaupageAutoScalingGroup
+      InstanceType: t2.micro
+#      BlockDeviceMappings:
+#        - DeviceName: /dev/xvdk
+#          Ebs:
+#            VolumeSize: 10
+#            VolumeType: gp2
+      SecurityGroups:
+        - app-influxdb
+      IamRoles:
+        - app-influxdb
+      AssociatePublicIpAddress: false # change for standalone deployment in default VPC
+      TaupageConfig:
+        runtime: Docker
+        source: "registry.opensource.zalan.do/acid/influxdb:{{Arguments.ImageVersion}}"
+#        environment:
+#          VERBOSE: "{{Arguments.Verbose}}"
+#        mounts:
+#          /home/influxdb/data:
+#            partition: /dev/xvdk
+#            filesystem: ext4
+#            # erase_on_boot should be false ?
+#            erase_on_boot: true
+#            options: noatime,nodiratime,nobarrier

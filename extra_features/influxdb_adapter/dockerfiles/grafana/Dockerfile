@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y wget
 RUN wget -q ${GRAFANA_URL}
 
 RUN mkdir grafana && tar xf ${GRAFANA_PKG} -C grafana --strip-components 1
+RUN chmod -R 777 grafana
 
 COPY launch_wrapper.py .
 

@@ -72,7 +72,7 @@ Resources:
       Name: "{{Arguments.version}}.{{Arguments.HostedZoneName}}."
       ResourceRecords:
         - Fn::GetAtt:
-           - ConfDberverFrontendLoadBalancer
+           - GrafanaLoadBalancer
            - DNSName
   GrafanaLoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
@@ -81,7 +81,7 @@ Resources:
       HealthCheck:
         HealthyThreshold: 2
         Interval: 30
-        Target: HTTP:8080/
+        Target: HTTP:8080/login
         Timeout: 5
         UnhealthyThreshold: 2
       Listeners:
@@ -90,7 +90,7 @@ Resources:
           Protocol: TCP
       LoadBalancerName: "grafana-{{Arguments.version}}"
       SecurityGroups:
-        - {{Arguments.LbSecurityGroupId}}
+        - "{{Arguments.LbSecurityGroupId}}"
       Scheme: internal
       Subnets:
         Fn::FindInMap:
