@@ -1,0 +1,56 @@
+# See http://stups.readthedocs.org/en/latest/components/senza.html for help on Senza
+
+# basic information for generating and executing this definition
+SenzaInfo:
+  StackName: pgobserver-exporter
+  Parameters:
+    - ImageVersion:
+        Description: "Docker image version of pgobserver-exporter."
+    - S3BucketForConfig:
+        Description: "S3 file with data source configs (https://github.com/zalando/PGObserver/blob/master/extra_features/influxdb_adapter/influx_config.yaml)"
+
+
+# a list of senza components to apply to the definition
+SenzaComponents:
+
+  # this basic configuration is required for the other components
+  - Configuration:
+      Type: Senza::StupsAutoConfiguration # auto-detect network setup
+
+  # will create a launch configuration and auto scaling group with scaling triggers
+  - AppServer:
+      Type: Senza::TaupageAutoScalingGroup
+      InstanceType: t2.micro
+      SecurityGroups:
+        - app-pgobserver-exporter
+      IamRoles:
+        - app-pgobserver-exporter
+        - Ref: PgobserverExporterAccessRole
+      AssociatePublicIpAddress: false # change for standalone deployment in default VPC
+      TaupageConfig:
+        runtime: Docker
+        source: "registry.opensource.zalan.do/acid/pgobserver-exporter:{{Arguments.ImageVersion}}"
+        environment:
+          PGOBS_EXPORTER_CONFIG_S3_BUCKET: "{{Arguments.S3BucketForConfig}}"
+
+Resources:
+  PgobserverExporterAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: PgobserverExporterEC2S3Access
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action: s3:*
+            Resource:
+              - "arn:aws:s3:::{{Arguments.S3BucketName}}"

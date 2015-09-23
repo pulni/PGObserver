@@ -5,6 +5,7 @@ import logging
 import os
 import collections
 import threading
+import urllib
 import influxdb
 import itertools
 import yaml
@@ -286,8 +287,7 @@ def do_pull_push_for_one_host(host_id, ui_shortname, is_first_loop, args):
 
 def main():
     parser = ArgumentParser(description='PGObserver InfluxDB Exporter Daemon')
-    parser.add_argument('-c', '--config', help='Path to config file. (default: {})'.format(DEFAULT_CONF_FILE),
-                        default=DEFAULT_CONF_FILE)
+    parser.add_argument('-c', '--config', help='Path or URL to config file. (template: {})'.format(DEFAULT_CONF_FILE))
     parser.add_argument('--hosts-to-sync', help='only given host_ids (comma separated) will be pushed to Influx')
     parser.add_argument('--drop-db', action='store_true', help='start with a fresh InfluxDB. Needs root login i.e. meant for testing purposes')
     parser.add_argument('--check-interval', help='min. seconds between checking for fresh data on PgO for host/view',
@@ -300,16 +300,26 @@ def main():
 
     logging.basicConfig(format='%(asctime)s %(threadName)s %(message)s', level=(logging.DEBUG if args.debug
                                                      else (logging.INFO if args.verbose else logging.ERROR)))
-    args.config = os.path.expanduser(args.config)
 
     global settings
+
+    args.config = args.config or os.environ.get('PGOBS_EXPORTER_CONFIG_S3_BUCKET')
+    if not args.config:
+        logging.error('--config missing!')
+        exit(1)
+
+    args.config = os.path.expanduser(args.config)
     if os.path.exists(args.config):
         logging.info("Trying to read config file from %s", args.config)
         with open(args.config, 'rb') as fd:
             settings = yaml.load(fd)
+    else:
+        logging.info("Trying to read config file from URL %s", args.config)
+        url = urllib.urlopen(args.config)
+        settings = yaml.load(url)
 
-    if settings is None:
-        logging.error('Config file missing - Yaml file could not be found')
+    if not (settings.get('database') and settings.get('influxdb')):
+        logging.error('Config info missing - recheck the --config input!')
         parser.print_help()
         exit(1)
 
