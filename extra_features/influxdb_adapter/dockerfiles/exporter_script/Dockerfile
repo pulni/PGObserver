@@ -6,6 +6,8 @@ RUN git clone -q https://github.com/zalando/PGObserver.git
 
 WORKDIR PGObserver/extra_features/influxdb_adapter
 
+RUN git checkout dockerfiles_for_influxdb_adapter && git pull
+
 RUN pip install -r requirements.txt
 
 ENTRYPOINT ["python2", "export_to_influxdb.py", "-v"]

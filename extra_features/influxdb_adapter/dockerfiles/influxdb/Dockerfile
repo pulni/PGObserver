@@ -8,8 +8,10 @@ RUN dpkg -i influxdb.deb
 
 EXPOSE 8083
 EXPOSE 8086
+EXPOSE 8088
 
 # change config to disable writing of self-monitoring metrics
 RUN sed -i 's/store-enabled = true/store-enabled = false/g' /etc/opt/influxdb/influxdb.conf
+RUN mkdir /var/run/influxdb && chmod -R 777 /var/run/influxdb && chmod -R 777 /var/opt/influxdb
 
-CMD ["/opt/influxdb/influxd", "-pidfile", "/var/run/influxdb/influxd.pid", "-config", "/etc/opt/influxdb/influxdb.conf"]
+ENTRYPOINT ["/opt/influxdb/influxd", "-pidfile", "/var/run/influxdb/influxd.pid", "-config", "/etc/opt/influxdb/influxdb.conf"]

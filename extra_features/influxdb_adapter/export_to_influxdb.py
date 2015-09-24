@@ -6,6 +6,7 @@ import os
 import collections
 import threading
 import urllib
+import boto
 import influxdb
 import itertools
 import yaml
@@ -40,7 +41,7 @@ DATA_COLLECTION_QUERIES_TO_SERIES_MAPPING = {       # queries are located in the
     }
 MAX_DAYS_TO_SELECT_AT_A_TIME = 3        # "chunk size" for selects from Postgres. for cases when we need to build up a long history
 SAFETY_SECONDS_FOR_LATEST_DATA = 10     # let's leave the freshest data out as the whole dataset might not be fully inserted yet
-settings = None   # for config file contents
+settings = {}   # for config file contents
 
 
 def pgo_get_data_and_columns_from_view(host_id, view_name, max_days_to_fetch, idb_latest_timestamp=None):
@@ -216,6 +217,16 @@ def split_by_tags_if_needed_and_push_to_influx(measurement, ui_shortname, data, 
     idb_write_points(ui_shortname, measurement=measurement, column_names=column_names, tag_names=tags, data_by_tags=data_by_tags)
 
 
+def get_s3_key_as_string(region_name, bucket_name, key_name):
+    conn = boto.s3.connect_to_region(region_name)
+    bucket = conn.get_bucket(bucket_name=bucket_name)
+    if bucket:
+        key = bucket.get_key(key_name)
+        if key:
+            return key.get_contents_as_string()
+    logging.error('S3 key not found: %s/%s/%s', region_name, bucket_name, key_name)
+    return None
+
 
 queue = Queue()
 last_tz_from_influx = {}    # {'db1series1'=tz,...} max timestamps read back from Influx to only query newer data from Postgres
@@ -287,7 +298,10 @@ def do_pull_push_for_one_host(host_id, ui_shortname, is_first_loop, args):
 
 def main():
     parser = ArgumentParser(description='PGObserver InfluxDB Exporter Daemon')
-    parser.add_argument('-c', '--config', help='Path or URL to config file. (template: {})'.format(DEFAULT_CONF_FILE))
+    parser.add_argument('-c', '--config', help='Path to local config file (template file: {})'.format(DEFAULT_CONF_FILE))
+    parser.add_argument('--s3-region', help='AWS S3 region for the config file', default=os.environ.get('PGOBS_EXPORTER_CONFIG_S3_REGION'))
+    parser.add_argument('--s3-bucket', help='AWS S3 bucket for the config file', default=os.environ.get('PGOBS_EXPORTER_CONFIG_S3_BUCKET'))
+    parser.add_argument('--s3-key', help='AWS S3 key for the config file', default=os.environ.get('PGOBS_EXPORTER_CONFIG_S3_KEY'))
     parser.add_argument('--hosts-to-sync', help='only given host_ids (comma separated) will be pushed to Influx')
     parser.add_argument('--drop-db', action='store_true', help='start with a fresh InfluxDB. Needs root login i.e. meant for testing purposes')
     parser.add_argument('--check-interval', help='min. seconds between checking for fresh data on PgO for host/view',
@@ -303,23 +317,19 @@ def main():
 
     global settings
 
-    args.config = args.config or os.environ.get('PGOBS_EXPORTER_CONFIG_S3_BUCKET')
-    if not args.config:
-        logging.error('--config missing!')
-        exit(1)
+    if args.config:
+        args.config = os.path.expanduser(args.config)
+        if os.path.exists(args.config):
+            logging.info("Trying to read config file from %s", args.config)
+            with open(args.config, 'rb') as fd:
+                settings = yaml.load(fd)
+    elif args.s3_region and args.s3_bucket and args.s3_key:
+        logging.info("Trying to read config file from S3...")
+        config_file_as_string = get_s3_key_as_string(args.s3_region, args.s3_bucket, args.s3_key)
+        settings = yaml.load(config_file_as_string)
 
-    args.config = os.path.expanduser(args.config)
-    if os.path.exists(args.config):
-        logging.info("Trying to read config file from %s", args.config)
-        with open(args.config, 'rb') as fd:
-            settings = yaml.load(fd)
-    else:
-        logging.info("Trying to read config file from URL %s", args.config)
-        url = urllib.urlopen(args.config)
-        settings = yaml.load(url)
-
-    if not (settings.get('database') and settings.get('influxdb')):
-        logging.error('Config info missing - recheck the --config input!')
+    if not (settings and settings.get('database') and settings.get('influxdb')):
+        logging.error('Config info missing - recheck the --config or --s3_config/--s3-region input!')
         parser.print_help()
         exit(1)
 

@@ -6,8 +6,12 @@ SenzaInfo:
   Parameters:
     - ImageVersion:
         Description: "Docker image version of pgobserver-exporter."
+    - S3RegionForConfig:
+        Description: "S3 region e.g. eu-west-1"
     - S3BucketForConfig:
-        Description: "S3 file with data source configs (https://github.com/zalando/PGObserver/blob/master/extra_features/influxdb_adapter/influx_config.yaml)"
+        Description: "S3 bucket name. Bucket doesn't need to public - S3 access policy is created automatically"
+    - S3KeyForConfig:
+        Description: "S3 file name within bucket. (see https://github.com/zalando/PGObserver/blob/master/extra_features/influxdb_adapter/influx_config.yaml)"
 
 
 # a list of senza components to apply to the definition
@@ -24,17 +28,18 @@ SenzaComponents:
       SecurityGroups:
         - app-pgobserver-exporter
       IamRoles:
-        - app-pgobserver-exporter
-        - Ref: PgobserverExporterAccessRole
+        - Ref: PgobserverExporterS3AccessRole
       AssociatePublicIpAddress: false # change for standalone deployment in default VPC
       TaupageConfig:
         runtime: Docker
         source: "registry.opensource.zalan.do/acid/pgobserver-exporter:{{Arguments.ImageVersion}}"
         environment:
+          PGOBS_EXPORTER_CONFIG_S3_REGION: "{{Arguments.S3RegionForConfig}}"
           PGOBS_EXPORTER_CONFIG_S3_BUCKET: "{{Arguments.S3BucketForConfig}}"
+          PGOBS_EXPORTER_CONFIG_S3_KEY: "{{Arguments.S3KeyForConfig}}"
 
 Resources:
-  PgobserverExporterAccessRole:
+  PgobserverExporterS3AccessRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -46,11 +51,12 @@ Resources:
           Action: sts:AssumeRole
       Path: /
       Policies:
-      - PolicyName: PgobserverExporterEC2S3Access
-        PolicyDocument:
-          Version: "2012-10-17"
-          Statement:
-          - Effect: Allow
-            Action: s3:*
-            Resource:
-              - "arn:aws:s3:::{{Arguments.S3BucketName}}"
+        - PolicyName: PgobserverExporterS3AccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Effect: Allow
+              Action:
+               - "s3:*"
+              Resource:
+                - "*"
