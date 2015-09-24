@@ -1,11 +1,11 @@
 from Queue import Queue
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
+from influxdb.exceptions import InfluxDBClientError
 import logging
 import os
 import collections
 import threading
-import urllib
 import boto
 import influxdb
 import itertools
@@ -13,6 +13,7 @@ import yaml
 import time
 import datadb
 import traceback
+
 
 DEFAULT_CONF_FILE = './influx_config.yaml'
 PGO_DATA_SCHEMA = 'monitor_data'
@@ -44,7 +45,7 @@ SAFETY_SECONDS_FOR_LATEST_DATA = 10     # let's leave the freshest data out as t
 settings = {}   # for config file contents
 
 
-def pgo_get_data_and_columns_from_view(host_id, view_name, max_days_to_fetch, idb_latest_timestamp=None):
+def pgo_get_data_and_columns_from_view(host_id, ui_shortname, view_name, max_days_to_fetch, idb_latest_timestamp=None):
     dt_now = datetime.now()
     from_timestamp = idb_latest_timestamp
     to_timestamp = dt_now
@@ -66,9 +67,13 @@ def pgo_get_data_and_columns_from_view(host_id, view_name, max_days_to_fetch, id
     logging.debug("Executing:")
     logging.debug("%s", datadb.mogrify(sql, sql_params))
 
-    view_data, columns = datadb.executeAsDict(sql, sql_params)
+    try:
+        view_data, columns = datadb.executeAsDict(sql, sql_params)
+        return view_data, columns
+    except Exception as e:
+        logging.error('[%s] could not get data from PGO view %s: %s', ui_shortname, view_name, e)
 
-    return view_data, columns
+    return [], []
 
 
 def get_idb_client():
@@ -138,6 +143,7 @@ def idb_ensure_database(db, dbname, recreate=None):
         db.drop_database(dbname)
         db.create_database(dbname)
     elif dbname not in db_names:
+        logging.info('Creating DB %s on InfluxDB...', dbname)
         db.create_database(dbname)
 
     ret_policies = [x['name'] for x in db.get_list_retention_policies(dbname)]
@@ -178,9 +184,12 @@ def idb_get_last_timestamp_for_series_as_local_datetime(series_name, ui_shortnam
         elif last_tz_gmt:
             return last_tz_local
 
+    except InfluxDBClientError as idbe:
+        if idbe.message.find('database not found') >= 0:
+            logging.warning("DB %s not found. Recreating ...", settings['influxdb']['database'])
+            idb_ensure_database(db, settings['influxdb']['database'])
     except Exception as e:
         logging.warning("Exception while getting latest timestamp: %s", e.message)
-        raise e
 
     return None
 
@@ -272,7 +281,7 @@ def do_pull_push_for_one_host(host_id, ui_shortname, is_first_loop, args):
                     latest_timestamp_for_series = idb_get_last_timestamp_for_series_as_local_datetime(measurement_name,
                                                                                                       ui_shortname)
                     logging.debug('[%s] latest_timestamp_for_series: %s', latest_timestamp_for_series, ui_shortname)
-                    data, column_names_from_query = pgo_get_data_and_columns_from_view(host_id,
+                    data, column_names_from_query = pgo_get_data_and_columns_from_view(host_id, ui_shortname,
                                                                        view_name,
                                                                        settings['influxdb']['max_days_to_fetch'],
                                                                        latest_timestamp_for_series)
@@ -291,7 +300,6 @@ def do_pull_push_for_one_host(host_id, ui_shortname, is_first_loop, args):
 
             except Exception as e:
                 logging.error('[%s] ERROR - Could not process %s: %s', ui_shortname, view_name, e.message)
-                raise
 
             logging.info('[%s] finished processing in %ss', ui_shortname, round(time.time() - host_processing_start_time))
 
@@ -312,7 +320,7 @@ def main():
 
     args = parser.parse_args()
 
-    logging.basicConfig(format='%(asctime)s %(threadName)s %(message)s', level=(logging.DEBUG if args.debug
+    logging.basicConfig(format='%(asctime)s %(levelname)s %(threadName)s %(message)s', level=(logging.DEBUG if args.debug
                                                      else (logging.INFO if args.verbose else logging.ERROR)))
 
     global settings
@@ -359,8 +367,9 @@ def main():
 
     if args.drop_db:
         logging.debug('DBs found from InfluxDB: %s', idb.get_list_database())
-        idb_ensure_database(idb, settings['influxdb']['database'], args.drop_db)
-
+        idb_ensure_database(idb, settings['influxdb']['database'], True)
+    else:
+        idb_ensure_database(idb, settings['influxdb']['database'], False)
     idb.switch_database(settings['influxdb']['database'])
 
     logging.info('Following views will be synced: %s', settings['data_collection_queries_to_process'])
